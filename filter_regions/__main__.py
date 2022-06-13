@@ -16,8 +16,6 @@ from enum import Enum, EnumMeta, unique
 import typer
 from rich.console import Console
 
-from filter_regions import version
-
 
 APP_NAME = 'filter-regions'
 MAX_ELEMENTS = 100_000
@@ -42,14 +40,14 @@ class FilterMethodDescription(str, Enum, metaclass=FilterMethodMeta):
 
 
 class Filter:
-    def __init__(self, method, input, bin_size, exclusion_size) -> None:
+    def __init__(self, method, input, window_bins=None, bin_size=200, exclusion_size=24800) -> None:
         self.method: str = method
         self.input: str = input
+        self.window_bins: int = window_bins if window_bins else None
         self.bin_size: int = bin_size
         self.exclusion_size: int = exclusion_size
         self.input_df: pd.DataFrame = None
         self.output_df: pd.DataFrame = None
-        self.window_bins: int = None
 
     def input_df(self, df: pd.DataFrame) -> None:
         self.input_df = df
@@ -65,7 +63,23 @@ class Filter:
         elif self.method == 'wis':
             df = pr.read_bed(self.input)
         self.input_df = df
-        self.window_bins = (self.bin_size + self.exclusion_size) // 200 # window size (in kb, not nt) * 5
+        self.window_bins = self.window_bins if self.window_bins else (self.bin_size + self.exclusion_size) // self.bin_size # window size (in units of bins, not nt)
+
+    def write(self, output: None) -> None:
+        o = StringIO()
+        try:
+            self.output_df.to_csv(o, sep="\t", index=False, header=False)
+            if not output:
+                sys.stdout.write(f"{o.getvalue()}")
+            else:
+                with open(output, 'wb') as ofh:
+                    ofh.write(f"{o.getvalue()}".encode("utf-8"))
+        except AttributeError as err:
+            console.print(f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Could not write output \[{err}]")
+            sys.exit(errno.EINVAL)
+    
+    def output_df(self) -> pd.DataFrame:
+        return self.output_df
 
     def filter(self) -> None:
         try:
@@ -89,7 +103,7 @@ class Filter:
         m = d.merge()
         df = d.as_df()
         df = df.rename(columns={"Name" : "Score"})
-        # update the start and end loci based on window size (kb units)
+        # update the start and end loci based on window size (bin units)
         df["Start"] = df.Start.shift(self.window_bins // 2)
         df["End"] = df.End.shift(-(self.window_bins // 2)) if self.window_bins % 2 else df.End.shift(-(self.window_bins // 2 - 1))
         df = df.dropna()
@@ -152,7 +166,7 @@ class Filter:
         df.columns = ["Chromosome", "Start", "End", "Score"]
         # save original indices
         df["ScoresIdx"] = df.index
-        # update the start and end loci based on window size (kb units)
+        # update the start and end loci based on window size (bin units)
         df["Start"] = df.Start.shift(self.window_bins // 2)
         df["End"] = df.End.shift(-(self.window_bins // 2)) if self.window_bins % 2 else df.End.shift(-(self.window_bins // 2 - 1))
         df = df.dropna()
@@ -192,17 +206,9 @@ class Filter:
         if not maxOnly: df.Score = df.Max
         df = df.sort_values(by=["ScoresIdx"], ascending=True)
         df = df[["Chromosome", "Start", "End", "Score"]]
+        df = df.loc[df["Score"] > 0]
         df = df.reset_index(drop=True)
         return df
-
-    def write(self) -> None:
-        o = StringIO()
-        try:
-            self.output_df.to_csv(o, sep="\t", index=False, header=False)
-            sys.stdout.write(f"{o.getvalue()}")
-        except AttributeError as err:
-            console.print(f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Could not write output \[{err}]")
-            sys.exit(errno.EINVAL)
 
 app = typer.Typer(
     name="filter-regions",
@@ -212,13 +218,6 @@ app = typer.Typer(
 
 # write console messages to standard error
 console = Console(stderr=True)
-
-
-def version_callback(print_version: bool) -> None:
-    """Print the version of the package."""
-    if print_version:
-        console.print(f"[yellow]filter-regions[/] version: [bold blue]{version}[/]")
-        raise typer.Exit()
 
 
 @app.command(name="")
@@ -237,6 +236,12 @@ def main(
         case_sensitive=True,
         help="Input filename path"
     ),
+    window_bins: int = typer.Option(
+        None,
+        "-w",
+        "--window-bins",
+        help="Window of bins that excludes overlap (bins)"
+    ),
     bin_size: int = typer.Option(
         200,
         "-b",
@@ -249,14 +254,6 @@ def main(
         "--exclusion-size",
         help="Exclusion size, up- and downstream of bin (nt)"
     ),
-    print_version: bool = typer.Option(
-        None,
-        "-v",
-        "--version",
-        callback=version_callback,
-        is_eager=True,
-        help="Prints the version of the filter-regions package.",
-    ),
 ) -> None:
     """Filter regions by specified method."""
     
@@ -268,10 +265,10 @@ def main(
         console.print(f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Must specify valid input path \[{input}]")
         sys.exit(errno.EINVAL)
 
-    f = Filter(method, input, bin_size, exclusion_size)
+    f = Filter(method, input, window_bins, bin_size, exclusion_size)
     f.read()
     f.filter()
-    f.write()
+    f.write(output=None)
 
 if __name__ == "__main__":
     app()
