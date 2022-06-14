@@ -35,7 +35,7 @@ classifiers = [  #! Update me
 
 [tool.poetry.dependencies]
 python = "^3.8"
-pyranges = "^0.0.115"
+pyranges = "^0.0.117"
 numpy = "^1.20.3"
 pandas = "^1.2.4"
 click = "^8.0.0"
