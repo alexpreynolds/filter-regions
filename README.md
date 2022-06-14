@@ -83,5 +83,5 @@ f.write() # send to standard output stream
 Or:
 
 ```
-f.write('/path/to/output') # write to a file
+f.write(output='/path/to/output') # write to a file
 ```
