@@ -40,7 +40,7 @@ class FilterMethodDescription(str, Enum, metaclass=FilterMethodMeta):
 
 
 class Filter:
-    def __init__(self, method, input, window_bins=None, bin_size=200, exclusion_size=24800) -> None:
+    def __init__(self, method, input, window_bins=None, bin_size=200, exclusion_size=24800, preserve_cols=False) -> None:
         self.method: str = method
         self.input: str = input
         self.window_bins: int = window_bins if window_bins else None
@@ -48,12 +48,16 @@ class Filter:
         self.exclusion_size: int = exclusion_size
         self.input_df: pd.DataFrame = None
         self.output_df: pd.DataFrame = None
+        self.preserve_cols: bool = preserve_cols
 
     def input_df(self, df: pd.DataFrame) -> None:
         self.input_df = df
 
     def output_df(self, df: pd.DataFrame) -> None:
         self.output_df = df
+
+    def preserve_cols(self, flag: bool) -> None:
+        self.preserve_cols = flag
 
     def read(self) -> None:
         df = None
@@ -205,7 +209,7 @@ class Filter:
         df = df.loc[indices]
         if not maxOnly: df.Score = df.Max
         df = df.sort_values(by=["ScoresIdx"], ascending=True)
-        df = df[["Chromosome", "Start", "End", "Score"]]
+        if not self.preserve_cols: df = df[["Chromosome", "Start", "End", "Score"]]
         df = df.loc[df["Score"] > 0]
         df = df.reset_index(drop=True)
         return df
@@ -254,6 +258,12 @@ def main(
         "--exclusion-size",
         help="Exclusion size, up- and downstream of bin (nt)"
     ),
+    preserve_cols: bool = typer.Option(
+        False,
+        "-p",
+        "--preserve-cols",
+        help="Keep all columns"
+    ),
 ) -> None:
     """Filter regions by specified method."""
     
@@ -265,7 +275,7 @@ def main(
         console.print(f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Must specify valid input path \[{input}]")
         sys.exit(errno.EINVAL)
 
-    f = Filter(method, input, window_bins, bin_size, exclusion_size)
+    f = Filter(method, input, window_bins, bin_size, exclusion_size, preserve_cols)
     f.read()
     f.filter()
     f.write(output=None)

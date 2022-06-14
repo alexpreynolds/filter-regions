@@ -85,3 +85,13 @@ Or:
 ```
 f.write(output='/path/to/output') # write to a file
 ```
+
+#### Preserve columns
+
+For the `pq` and `maxmean` methods, you may like to preserve additional columns in the output. Run the following after `read()` and before `filter()` to do so:
+
+```
+f.preserve_cols = True
+```
+
+Then `f.filter()` etc.
