@@ -1,18 +1,18 @@
 # type: ignore[attr-defined]
 
-import os
-import sys
-import errno
-import timeit
 import bisect
 import collections
+import errno
+import os
+import sys
+import timeit
+from enum import Enum, EnumMeta, unique
+from io import StringIO
+
+import natsort as ns
 import numpy as np
 import pandas as pd
-import natsort as ns
 import pyranges as pr
-from io import StringIO
-from enum import Enum, EnumMeta, unique
-
 import typer
 from rich.console import Console
 
