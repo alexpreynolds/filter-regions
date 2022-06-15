@@ -30,24 +30,20 @@ poetry run filter-regions --help
 
 ### Command-line
 
-It can be useful to try out the script with the example intervals:
+Example:
 
 ```
-unstarch tests/test_example/scores.bed.starch > tests/test_example/scores.bed
+filter-regions --method maxmean --input input.bed > output.bed
 ```
 
-Then:
+The example above uses the max-mean sweep method to locate high-priority intervals. Replace `maxmean` with `pq` or `wis` to use the priority-queue or weighted-interval scheduling method for filtering.
 
-```
-filter-regions --method maxmean --input tests/test_example/scores.bed > /tmp/scores.filtered_via_maxmean.bed
-```
-
-This uses the max-mean sweep method to locate high-priority intervals. Replace `maxmean` with `pq` or `wis` to use the priority-queue or weighted-interval scheduling method for filtering.
+For methods `pq` and `maxmean`, the `input.bed` file should be BED3+, where fourth and additional columns are a per-interval score vector. For the `wis` method, the `input.bed` file should be BedGraph or BED3+1; the fourth column should be a score value.
 
 Depending on the particulars of your input, you can also override bin size and exclusion size:
 
 ```
-filter-regions --method maxmean --input tests/test_example/scores.bed --bin-size 200 --exclusion-size 24800 > /tmp/scores.filtered_via_maxmean.bed
+filter-regions --method maxmean --input input.bed --bin-size 200 --exclusion-size 24800 > output.bed
 ```
 
 In this example, the entire exclusion space is therefore 25kb (200 + 24800 nt). Filtered elements will not overlap within this space.
