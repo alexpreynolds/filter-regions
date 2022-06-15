@@ -16,7 +16,6 @@ import pyranges as pr
 import typer
 from rich.console import Console
 
-
 APP_NAME = 'filter-regions'
 MAX_ELEMENTS = 100_000
 
