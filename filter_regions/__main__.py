@@ -75,8 +75,7 @@ class Filter:
             df = pd.read_csv(
                 self.input,
                 sep="\t",
-                header=None,
-                names=["Chromosome", "Start", "End", "Score"],
+                header=None
             )
         elif self.method == "wis":
             df = pr.read_bed(self.input)
