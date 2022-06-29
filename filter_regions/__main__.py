@@ -8,6 +8,7 @@ import sys
 import timeit
 from enum import Enum, EnumMeta, unique
 from io import StringIO
+from typing import Union
 
 import natsort as ns
 import numpy as np
@@ -61,6 +62,7 @@ class Filter:
         preserve_cols=False,
         aggregation_method=FilterAggregationMethod.max,
         percentile=0.95,
+        quiet=False,
     ) -> None:
         self.method: str = method
         self.input: str = input
@@ -73,6 +75,7 @@ class Filter:
         self.preserve_cols: bool = preserve_cols
         self.aggregation_method: str = aggregation_method
         self.percentile: float = percentile
+        self.quiet: bool = quiet
 
         if self.input_type == "vector" and self.method == "wis":
             console.print(
@@ -94,17 +97,49 @@ class Filter:
 
     def read(self) -> None:
         df = None
-        console.print(
-            f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Reading input file into dataframe..."
-        )
-        if self.method == "pq" or self.method == "maxmean":
-            df = pd.read_csv(
-                self.input,
-                sep="\t",
-                header=None
+        if not self.quiet:
+            console.print(
+                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Reading input..."
             )
-        elif self.method == "wis":
-            df = pr.read_bed(self.input)
+        if isinstance(self.input, str):
+            if not os.path.exists(self.input):
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid input path \[{self.input}]"
+                )
+                sys.exit(errno.EINVAL)
+            if self.method == "pq" or self.method == "maxmean":
+                df = pd.read_csv(
+                    self.input,
+                    sep="\t",
+                    header=None
+                )
+            elif self.method == "wis":
+                df = pr.read_bed(self.input)
+        elif isinstance(self.input, np.ndarray):
+            s = self.input.shape
+            l = len(s)
+            if l != 1 and l != 2:
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Numpy array is not a 1D vector or 2D matrix \[{l} != 1 or 2]"
+                )
+                sys.exit(errno.EINVAL)
+            if l == 2 and s[1] != 4:
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Numpy matrix has incorrect number of columns \[{s[1]} != 4]"
+                )
+                sys.exit(errno.EINVAL)
+            if self.method == "pq" or self.method == "maxmean":
+                df = pd.DataFrame(self.input)
+                if l == 1:
+                    df = df.transpose()
+        if self.input_type == "bedgraph":
+            df.columns = ["Chromosome", "Start", "End", "Score"]
+        elif self.input_type == "vector":
+            df = df.rename({0: "Score"}, axis='index')
+            df = df.transpose().reset_index(drop=True)
+            df["Start"] = df.index
+            df["End"] = df["Start"] + 1 
+            df = df[["Start", "End", "Score"]]
         self.input_df = df
         self.window_bins = (
             self.window_bins
@@ -132,22 +167,24 @@ class Filter:
 
     def filter(self) -> None:
         try:
-            console.print(
-                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Filtering with {self.method} method..."
-            )
-            console.print(
-                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Aggregating score window with {self.aggregation_method} method..."
-            )
+            if not self.quiet:
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Filtering with {self.method} method..."
+                )
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Aggregating score window with {self.aggregation_method} method..."
+                )
             start = timeit.default_timer()                
             run = getattr(self, self.method)
             self.output_df = run()
             end = timeit.default_timer()
-            console.print(
-                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method completed in: {(end - start):.2f} s"
-            )
-            console.print(
-                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method found: {len(self.output_df.index)} of {len(self.input_df.index)} ({(len(self.output_df.index) / len(self.input_df.index)):.4f}) elements"
-            )
+            if not self.quiet:
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method completed in: {(end - start):.2f} s"
+                )
+                console.print(
+                    f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method found: {len(self.output_df.index)} of {len(self.input_df.index)} ({(len(self.output_df.index) / len(self.input_df.index)):.4f}) elements"
+                )
         except TypeError:
             console.print(
                 f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Method could not be applied"
@@ -228,17 +265,7 @@ class Filter:
         return r
 
     def maxmean(self, pq: bool = False) -> pd.DataFrame:
-        df = None
-        if self.input_type == "bedgraph":
-            df = self.input_df
-            df.columns = ["Chromosome", "Start", "End", "Score"]
-        elif self.input_type == "vector":
-            df = self.input_df
-            df = df.rename({0: "Score"}, axis='index')
-            df = df.transpose().reset_index(drop=True)
-            df["Start"] = df.index
-            df["End"] = df["Start"] + 1 
-            df = df[["Start", "End", "Score"]]
+        df = self.input_df
         # save original indices
         df["OriginalIdx"] = df.index
         # update the start and end loci based on window size (bin units)
@@ -254,6 +281,7 @@ class Filter:
         pd.options.mode.chained_assignment = None
         df["Start"] = df["Start"].astype(int)
         df["End"] = df["End"].astype(int)
+        df["Score"] = df["Score"].astype(float) # req'd for sort to work correctly
         df = df.reset_index(drop=True)
         # get rolling summary statistics
         df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
@@ -311,9 +339,7 @@ class Filter:
                 indices.append(j)
                 k -= 1
         df = df.loc[indices]
-        if pq:
-            pass # original score, unaggregated
-        elif self.aggregation_method == "max":
+        if self.aggregation_method == "max":
             df.Score = df.RollingMax
         elif self.aggregation_method == "min":
             df.Score = df.RollingMin
@@ -358,8 +384,8 @@ def main(
         case_sensitive=True,
         help="Filter method (pq|wis|maxmean)",
     ),
-    input: str = typer.Option(
-        ..., "-i", "--input", case_sensitive=True, help="Input filename path"
+    input: Union[str, np.ndarray] = typer.Option(
+        ..., "-i", "--input", case_sensitive=True, help="Input filename path, or Numpy vector or matrix"
     ),
     input_type: str = typer.Option(
         ...,
@@ -393,6 +419,9 @@ def main(
         "-c",
         "--percentile",
         help="If percentile aggregation is used, this float specifies the desired percentile (0 < p < 1; default=0.95)"
+    ),
+    quiet: bool = typer.Option(
+        False, "-q", "--quiet", help="Do not print messages to console"
     )
 ) -> None:
     """Filter regions by specified method."""
@@ -415,17 +444,19 @@ def main(
         )
         sys.exit(errno.EINVAL)
 
-    if not os.path.exists(input):
-        console.print(
-            f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid input path \[{input}]"
-        )
-        sys.exit(errno.EINVAL)
-
-    f = Filter(method, input, input_type, window_bins, bin_size, exclusion_size, preserve_cols, aggregation_method, percentile)
+    f = Filter(method, 
+               input, 
+               input_type, 
+               window_bins, 
+               bin_size, 
+               exclusion_size, 
+               preserve_cols, 
+               aggregation_method, 
+               percentile,
+               quiet)
     f.read()
     f.filter()
     f.write(output=None)
-
 
 if __name__ == "__main__":
     app()
