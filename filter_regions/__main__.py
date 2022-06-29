@@ -1,5 +1,7 @@
 # type: ignore[attr-defined]
 
+from typing import Union
+
 import bisect
 import collections
 import errno
@@ -8,7 +10,6 @@ import sys
 import timeit
 from enum import Enum, EnumMeta, unique
 from io import StringIO
-from typing import Union
 
 import natsort as ns
 import numpy as np
@@ -76,12 +77,9 @@ class Filter:
         self.aggregation_method: str = aggregation_method
         self.percentile: float = percentile
         self.quiet: bool = quiet
-
-        if self.input_type == "vector" and self.method == "wis":
-            console.print(
-                f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Can only use BedGraph (BED3+) input with WIS method at this time"
-            )
-            sys.exit(errno.EINVAL)
+        # ignore SettingWithCopyWarning 
+        # cf. https://towardsdatascience.com/explaining-the-settingwithcopywarning-in-pandas-ebc19d799d25
+        pd.options.mode.chained_assignment = None
 
     def input_df(self, df: pd.DataFrame) -> None:
         self.input_df = df
@@ -107,14 +105,27 @@ class Filter:
                     f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid input path \[{self.input}]"
                 )
                 sys.exit(errno.EINVAL)
-            if self.method == "pq" or self.method == "maxmean":
+            if self.method == "pq":
+                df = pd.read_csv(
+                    self.input,
+                    sep="\t",
+                    header=None
+                )
+            elif self.method == "maxmean":
                 df = pd.read_csv(
                     self.input,
                     sep="\t",
                     header=None
                 )
             elif self.method == "wis":
-                df = pr.read_bed(self.input)
+                if self.input_type == "bedgraph":
+                    df = pr.read_bed(self.input)
+                elif self.input_type == "vector":
+                    df = pd.read_csv(
+                        self.input,
+                        sep="\t",
+                        header=None
+                    )
         elif isinstance(self.input, np.ndarray):
             s = self.input.shape
             l = len(s)
@@ -128,7 +139,15 @@ class Filter:
                     f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Numpy matrix has incorrect number of columns \[{s[1]} != 4]"
                 )
                 sys.exit(errno.EINVAL)
-            if self.method == "pq" or self.method == "maxmean":
+            if self.method == "pq":
+                df = pd.DataFrame(self.input)
+                if l == 1:
+                    df = df.transpose()
+            elif self.method == "maxmean":
+                df = pd.DataFrame(self.input)
+                if l == 1:
+                    df = df.transpose()
+            elif self.method == "wis":
                 df = pd.DataFrame(self.input)
                 if l == 1:
                     df = df.transpose()
@@ -139,7 +158,15 @@ class Filter:
             df = df.transpose().reset_index(drop=True)
             df["Start"] = df.index
             df["End"] = df["Start"] + 1 
-            df = df[["Start", "End", "Score"]]
+            if self.method == "wis":
+                df["Chromosome"] = "chrSentinel"
+                df = df[["Chromosome", "Start", "End", "Score"]]
+            else:
+                df = df[["Start", "End", "Score"]]
+        if self.method != "wis":
+            df["Score"] = df["Score"].astype(float) # req'd for sort to work correctly
+        if self.method == "wis" and self.input_type == "vector":
+            df = pr.PyRanges(df)
         self.input_df = df
         self.window_bins = (
             self.window_bins
@@ -176,7 +203,22 @@ class Filter:
                 )
             start = timeit.default_timer()                
             run = getattr(self, self.method)
-            self.output_df = run()
+            df = run()
+            if self.aggregation_method == "max":
+                df.Score = df.RollingMax
+            elif self.aggregation_method == "min":
+                df.Score = df.RollingMin
+            elif self.aggregation_method == "mean":
+                df.Score = df.RollingMean
+            elif self.aggregation_method == "sum":
+                df.Score = df.RollingSum
+            elif self.aggregation_method == "median":
+                df.Score = df.RollingMedian
+            elif self.aggregation_method == "variance":
+                df.Score = df.RollingVariance
+            elif self.aggregation_method == "percentile":
+                df.Score = df.RollingPercentile
+            self.output_df = df
             end = timeit.default_timer()
             if not self.quiet:
                 console.print(
@@ -198,6 +240,7 @@ class Filter:
         d = self.input_df
         m = d.merge()
         df = d.as_df()
+        self.input_df = df
         df = df.rename(columns={"Name": "Score"})
         # update the start and end loci based on window size (bin units)
         df["Start"] = df.Start.shift(self.window_bins // 2)
@@ -211,6 +254,7 @@ class Filter:
         df["Start"] = df["Start"].astype(int)
         df["End"] = df["End"].astype(int)
         # intervals in the df must be sorted for the trace to work correctly (natural sort on chromosome)
+        df["OriginalIdx"] = df.index
         df = df.sort_values(by=["Chromosome", "Start", "End"])
         df = df.reindex(
             index=ns.order_by_index(
@@ -218,6 +262,17 @@ class Filter:
             )
         )
         df = df.reset_index(drop=True)
+        # get rolling summary statistics
+        df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
+        df["RollingMax"] = df["Score"].rolling(self.window_bins, center=True).max()
+        df["RollingMean"] = df["Score"].rolling(self.window_bins, center=True).mean()
+        df["RollingSum"] = df["Score"].rolling(self.window_bins, center=True).sum()
+        df["RollingMedian"] = df["Score"].rolling(self.window_bins, center=True).median()
+        df["RollingVariance"] = df["Score"].rolling(self.window_bins, center=True).var()        
+        df["RollingPercentile"] = df["Score"].rolling(self.window_bins, center=True).quantile(self.percentile)
+        # get rid of edges
+        df = df.dropna().reset_index(drop=True)
+        df["MethodIdx"] = df.index
         n = len(df.index)
         # build accumulator-based dict for calculation of absolute coordinates
         acc_chr = m.as_df().loc[:, "Chromosome"].copy().values
@@ -251,7 +306,7 @@ class Filter:
         # backwards trace to retrieve path
         q = []
         j = n - 1
-        print("{}".format(j))
+        # print("{}".format(j))
         while j >= 0:
             score = df.loc[df.index[j], "Score"]
             if score + opt[p[j]] > opt[j - 1]:
@@ -261,8 +316,10 @@ class Filter:
                 j -= 1  # try the "next" interval, one to the left
         # sort indices of qualifiers
         q.sort()
-        r = df.iloc[q]
-        return r
+        df = df.iloc[q]
+        if self.input_type == "vector":
+            df = df[["Start", "End", "Score"]] if not self.preserve_cols else df.iloc[: , 1:]
+        return df
 
     def maxmean(self, pq: bool = False) -> pd.DataFrame:
         df = self.input_df
@@ -276,12 +333,8 @@ class Filter:
             else df.End.shift(-(self.window_bins // 2 - 1))
         )
         df = df.dropna()
-        # ignore SettingWithCopyWarning 
-        # cf. https://towardsdatascience.com/explaining-the-settingwithcopywarning-in-pandas-ebc19d799d25
-        pd.options.mode.chained_assignment = None
         df["Start"] = df["Start"].astype(int)
         df["End"] = df["End"].astype(int)
-        df["Score"] = df["Score"].astype(float) # req'd for sort to work correctly
         df = df.reset_index(drop=True)
         # get rolling summary statistics
         df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
@@ -339,20 +392,6 @@ class Filter:
                 indices.append(j)
                 k -= 1
         df = df.loc[indices]
-        if self.aggregation_method == "max":
-            df.Score = df.RollingMax
-        elif self.aggregation_method == "min":
-            df.Score = df.RollingMin
-        elif self.aggregation_method == "mean":
-            df.Score = df.RollingMean
-        elif self.aggregation_method == "sum":
-            df.Score = df.RollingSum
-        elif self.aggregation_method == "median":
-            df.Score = df.RollingMedian
-        elif self.aggregation_method == "variance":
-            df.Score = df.RollingVariance
-        elif self.aggregation_method == "percentile":
-            df.Score = df.RollingPercentile
         # resort input by original order
         df = df.sort_values(by=["OriginalIdx"], ascending=True)
         # clip columns, unless we preserve them
@@ -364,7 +403,6 @@ class Filter:
         df = df.reset_index(drop=True)
         return df
 
-
 app = typer.Typer(
     name="filter-regions",
     help="Filter genomic regions by score and proximity",
@@ -373,7 +411,6 @@ app = typer.Typer(
 
 # write console messages to standard error
 console = Console(stderr=True)
-
 
 @app.command(name="")
 def main(

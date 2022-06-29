@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
+import sys
+
 import numpy as np
 
-import sys
 sys.path.insert(1, '../')
 import filter_regions as fr
 
@@ -12,7 +13,7 @@ t = 'vector'
 w = 3
 a = 'max'
 p = True
-q = True
+q = False
 
 f = fr.Filter(method=m,
               input=i,

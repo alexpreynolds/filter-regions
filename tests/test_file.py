@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 import sys
+
 sys.path.insert(1, '../')
 import filter_regions as fr
 
-m = 'pq'
+m = 'wis'
 # i = 'test_example/scores.10k.txt'
 # t = 'vector'
 i = 'test_example/scores.10k.bed'
