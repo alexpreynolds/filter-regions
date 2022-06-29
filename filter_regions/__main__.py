@@ -19,43 +19,66 @@ from rich.console import Console
 APP_NAME = "filter-regions"
 MAX_ELEMENTS = 100_000
 
-
-class FilterMethodMeta(EnumMeta):
+class FilterMeta(EnumMeta):
     def __contains__(cls, item):
         return item in [v.value for v in cls.__members__.values()]
 
-
 @unique
-class FilterMethod(str, Enum, metaclass=FilterMethodMeta):
+class FilterMethod(str, Enum, metaclass=FilterMeta):
     pq = "pq"
     wis = "wis"
     maxmean = "maxmean"
 
-
-class FilterMethodDescription(str, Enum, metaclass=FilterMethodMeta):
+class FilterMethodDescription(str, Enum, metaclass=FilterMeta):
     pq = "Priority-Queue (PQ)"
     wis = "Weighted Interval Scheduler (WIS)"
     maxmean = "Max-Mean Sweep (MaxMean)"
 
+@unique
+class FilterInputType(str, Enum, metaclass=FilterMeta):
+    vector = "vector"
+    bedgraph = "bedgraph"
+
+@unique
+class FilterAggregationMethod(str, Enum, metaclass=FilterMeta):
+    min = "min"
+    max = "max"
+    mean = "mean"
+    sum = "sum"
+    median = "median"
+    variance = "variance"
+    percentile = "percentile"
 
 class Filter:
     def __init__(
         self,
         method,
         input,
+        input_type,
         window_bins=None,
         bin_size=200,
         exclusion_size=24800,
         preserve_cols=False,
+        aggregation_method=FilterAggregationMethod.max,
+        percentile=0.95,
     ) -> None:
         self.method: str = method
         self.input: str = input
+        self.input_type: str = input_type
         self.window_bins: int = window_bins if window_bins else None
         self.bin_size: int = bin_size
         self.exclusion_size: int = exclusion_size
         self.input_df: pd.DataFrame = None
         self.output_df: pd.DataFrame = None
         self.preserve_cols: bool = preserve_cols
+        self.aggregation_method: str = aggregation_method
+        self.percentile: float = percentile
+
+        if self.input_type == "vector" and self.method == "wis":
+            console.print(
+                f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Can only use BedGraph (BED3+) input with WIS method at this time"
+            )
+            sys.exit(errno.EINVAL)
 
     def input_df(self, df: pd.DataFrame) -> None:
         self.input_df = df
@@ -66,10 +89,13 @@ class Filter:
     def preserve_cols(self, flag: bool) -> None:
         self.preserve_cols = flag
 
+    def input_type(self, it: str) -> None:
+        self.input_type = it
+
     def read(self) -> None:
         df = None
         console.print(
-            f"[bold blue]{APP_NAME}[/] [bold green]Run[/] Reading input file into dataframe..."
+            f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Reading input file into dataframe..."
         )
         if self.method == "pq" or self.method == "maxmean":
             df = pd.read_csv(
@@ -97,7 +123,7 @@ class Filter:
                     ofh.write(f"{o.getvalue()}".encode("utf-8"))
         except AttributeError as err:
             console.print(
-                f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Could not write output \[{err}]"
+                f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Could not write output \[{err}]"
             )
             sys.exit(errno.EINVAL)
 
@@ -107,27 +133,29 @@ class Filter:
     def filter(self) -> None:
         try:
             console.print(
-                f"[bold blue]{APP_NAME}[/] [bold green]Run[/] Filtering with {self.method} method..."
+                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Filtering with {self.method} method..."
             )
-            start = timeit.default_timer()
+            console.print(
+                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Aggregating score window with {self.aggregation_method} method..."
+            )
+            start = timeit.default_timer()                
             run = getattr(self, self.method)
             self.output_df = run()
             end = timeit.default_timer()
             console.print(
-                f"[bold blue]{APP_NAME}[/] [bold green]Run[/] Method completed in: {(end - start):.2f} s"
+                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method completed in: {(end - start):.2f} s"
             )
             console.print(
-                f"[bold blue]{APP_NAME}[/] [bold green]Run[/] Method found: {len(self.output_df.index)} elements"
+                f"[bold blue]{APP_NAME}[/] | [bold green]Run[/] | Method found: {len(self.output_df.index)} of {len(self.input_df.index)} ({(len(self.output_df.index) / len(self.input_df.index)):.4f}) elements"
             )
         except TypeError:
             console.print(
-                f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Method could not be applied"
+                f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Method could not be applied"
             )
             sys.exit(errno.EINVAL)
 
     def pq(self) -> pd.DataFrame:
-        maxOnly = True
-        return self.maxmean(maxOnly)
+        return self.maxmean(pq=True)
 
     def wis(self) -> pd.DataFrame:
         d = self.input_df
@@ -199,12 +227,20 @@ class Filter:
         r = df.iloc[q]
         return r
 
-    def maxmean(self, maxOnly: bool = False) -> pd.DataFrame:
-        df = self.input_df.iloc[:, :3]
-        df[3] = self.input_df.iloc[:, 3:].sum(axis=1)
-        df.columns = ["Chromosome", "Start", "End", "Score"]
+    def maxmean(self, pq: bool = False) -> pd.DataFrame:
+        df = None
+        if self.input_type == "bedgraph":
+            df = self.input_df
+            df.columns = ["Chromosome", "Start", "End", "Score"]
+        elif self.input_type == "vector":
+            df = self.input_df
+            df = df.rename({0: "Score"}, axis='index')
+            df = df.transpose().reset_index(drop=True)
+            df["Start"] = df.index
+            df["End"] = df["Start"] + 1 
+            df = df[["Start", "End", "Score"]]
         # save original indices
-        df["ScoresIdx"] = df.index
+        df["OriginalIdx"] = df.index
         # update the start and end loci based on window size (bin units)
         df["Start"] = df.Start.shift(self.window_bins // 2)
         df["End"] = (
@@ -213,27 +249,38 @@ class Filter:
             else df.End.shift(-(self.window_bins // 2 - 1))
         )
         df = df.dropna()
+        # ignore SettingWithCopyWarning 
+        # cf. https://towardsdatascience.com/explaining-the-settingwithcopywarning-in-pandas-ebc19d799d25
+        pd.options.mode.chained_assignment = None
         df["Start"] = df["Start"].astype(int)
         df["End"] = df["End"].astype(int)
         df = df.reset_index(drop=True)
-        # get rolling means and maxes
-        df["Max"] = df["Score"].rolling(self.window_bins, center=True).max()
-        df["Mean"] = df["Score"].rolling(self.window_bins, center=True).mean()
+        # get rolling summary statistics
+        df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
+        df["RollingMax"] = df["Score"].rolling(self.window_bins, center=True).max()
+        df["RollingMean"] = df["Score"].rolling(self.window_bins, center=True).mean()
+        df["RollingSum"] = df["Score"].rolling(self.window_bins, center=True).sum()
+        df["RollingMedian"] = df["Score"].rolling(self.window_bins, center=True).median()
+        df["RollingVariance"] = df["Score"].rolling(self.window_bins, center=True).var()        
+        df["RollingPercentile"] = df["Score"].rolling(self.window_bins, center=True).quantile(self.percentile)
         # get rid of edges
         df = df.dropna().reset_index(drop=True)
         # drop regions which fall over two chromosomes
-        df = df.drop(
-            np.where(df.iloc[:, 1].to_numpy() >= df.iloc[:, 2].to_numpy())[0]
-        ).reset_index(drop=True)
+        if self.input_type == "bedgraph":
+            df = df.drop(
+                np.where(df.iloc[:, 1].to_numpy() >= df.iloc[:, 2].to_numpy())[0]
+            ).reset_index(drop=True)
         # save new indices before sorting
         df["MethodIdx"] = df.index
-        # sort by max, by mean, and then by score
+        # sort by max, by mean, and then by score, unless we are
+        # using the pq method, in which case we simply prioritize 
+        # on the original score column
         df = (
-            df.sort_values(by=["Max", "Mean", "Score"], ascending=False)
-            if not maxOnly
-            else df.sort_values(by=["Max", "Score"], ascending=False)
+            df.sort_values(by=["RollingMax", "RollingMean", "Score"], ascending=False)
+            if not pq
+            else df.sort_values(by=["Score"], ascending=False)
         )
-        # run max-mean sweep algorithm
+        # run filter algorithm
         n = len(df)
         hits = np.zeros(n, dtype=bool)
         indices = []
@@ -241,7 +288,7 @@ class Filter:
         for loc in range(n):
             if k <= 0:
                 break
-            j = df.iloc[loc, 7]
+            j = int(df.iloc[loc]["MethodIdx"])
             start = (
                 (j - self.window_bins // 2) if (j - self.window_bins // 2) > 0 else 0
             )
@@ -264,12 +311,30 @@ class Filter:
                 indices.append(j)
                 k -= 1
         df = df.loc[indices]
-        if not maxOnly:
-            df.Score = df.Max
-        df = df.sort_values(by=["ScoresIdx"], ascending=True)
+        if pq:
+            pass # original score, unaggregated
+        elif self.aggregation_method == "max":
+            df.Score = df.RollingMax
+        elif self.aggregation_method == "min":
+            df.Score = df.RollingMin
+        elif self.aggregation_method == "mean":
+            df.Score = df.RollingMean
+        elif self.aggregation_method == "sum":
+            df.Score = df.RollingSum
+        elif self.aggregation_method == "median":
+            df.Score = df.RollingMedian
+        elif self.aggregation_method == "variance":
+            df.Score = df.RollingVariance
+        elif self.aggregation_method == "percentile":
+            df.Score = df.RollingPercentile
+        # resort input by original order
+        df = df.sort_values(by=["OriginalIdx"], ascending=True)
+        # clip columns, unless we preserve them
         if not self.preserve_cols:
-            df = df[["Chromosome", "Start", "End", "Score"]]
-        df = df.loc[df["Score"] > 0]
+            if self.input_type == "bedgraph":
+                df = df[["Chromosome", "Start", "End", "Score"]]
+            elif self.input_type == "vector":
+                df = df[["Start", "End", "Score"]]
         df = df.reset_index(drop=True)
         return df
 
@@ -296,6 +361,13 @@ def main(
     input: str = typer.Option(
         ..., "-i", "--input", case_sensitive=True, help="Input filename path"
     ),
+    input_type: str = typer.Option(
+        ...,
+        "-t",
+        "--input-type",
+        case_sensitive=True,
+        help="Input type (vector|bedgraph)",
+    ),
     window_bins: int = typer.Option(
         None, "-w", "--window-bins", help="Window of bins that excludes overlap (bins)"
     ),
@@ -309,22 +381,47 @@ def main(
     preserve_cols: bool = typer.Option(
         False, "-p", "--preserve-cols", help="Keep all columns"
     ),
+    aggregation_method: str = typer.Option(
+        "max",
+        "-a",
+        "--aggregation-method",
+        case_sensitive=True,
+        help="Aggregation method (max|min|mean|median|sum|variance|percentile; default=max)",
+    ),
+    percentile: float = typer.Option(
+        0.95,
+        "-c",
+        "--percentile",
+        help="If percentile aggregation is used, this float specifies the desired percentile (0 < p < 1; default=0.95)"
+    )
 ) -> None:
     """Filter regions by specified method."""
 
     if method not in FilterMethod:
         console.print(
-            f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Must specify valid selection method \[{'|'.join([e.value for e in FilterMethod])}]"
+            f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid selection method \[{'|'.join([e.value for e in FilterMethod])}]"
+        )
+        sys.exit(errno.EINVAL)
+
+    if input_type not in FilterInputType:
+        console.print(
+            f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid input type \[{'|'.join([e.value for e in FilterInputType])}]"
+        )
+        sys.exit(errno.EINVAL)
+    
+    if aggregation_method not in FilterAggregationMethod:
+        console.print(
+            f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid agggregation method \[{'|'.join([e.value for e in FilterAggregationMethod])}]"
         )
         sys.exit(errno.EINVAL)
 
     if not os.path.exists(input):
         console.print(
-            f"[bold blue]{APP_NAME}[/] [bold red]Error[/] Must specify valid input path \[{input}]"
+            f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Must specify valid input path \[{input}]"
         )
         sys.exit(errno.EINVAL)
 
-    f = Filter(method, input, window_bins, bin_size, exclusion_size, preserve_cols)
+    f = Filter(method, input, input_type, window_bins, bin_size, exclusion_size, preserve_cols, aggregation_method, percentile)
     f.read()
     f.filter()
     f.write(output=None)

@@ -5,7 +5,7 @@ Filter genomic regions by score and proximity
 ## Installation
 
 ```bash
-pip install -U filter-regions
+pip install .
 ```
 
 or install with `Poetry`
@@ -14,43 +14,76 @@ or install with `Poetry`
 poetry add filter-regions
 ```
 
-Then you can run
-
-```bash
-filter-regions --help
-```
-
-or with `Poetry`:
-
-```bash
-poetry run filter-regions --help
-```
-
 ## Usage
 
-### Command-line
+This module may be used as a library integrated with other Python projects, or as a standalone binary. Here we describe its use as a Python library.
 
-Example:
+### Input
 
-```
-filter-regions --method maxmean --input input.bed > output.bed
-```
+Input can be a file containing tab-delimited floating-point values on one line (input type of `vector`) or a BedGraph-formatted (BED3+) file, where the fourth column contains floats (`bedgraph`).
 
-The example above uses the max-mean sweep method to locate high-priority intervals. Replace `maxmean` with `pq` or `wis` to use the priority-queue or weighted-interval scheduling method for filtering.
+### Output
 
-For methods `pq` and `maxmean`, the `input.bed` file should be BED3+, where fourth and additional columns are a per-interval score vector. For the `wis` method, the `input.bed` file should be BedGraph or BED3+1; the fourth column should be a score value.
+Depending on input type (`vector` or `bedgraph`), by default, the output will be either three- or four-column values, respectively. 
 
-Depending on the particulars of your input, you can also override bin size and exclusion size:
+When used as a library, the output will be a Pandas dataframe with column names described below.
 
-```
-filter-regions --method maxmean --input input.bed --bin-size 200 --exclusion-size 24800 > output.bed
-```
+In the case of the `vector` input type, the output will contain a half-open start and end index and the aggregated score over that index (`[start, end)`). The difference of these indices will equal the `window_bins` parameter (e.g., 125 in current usage cases). Here are column names for this output:
 
-In this example, the entire exclusion space is therefore 25kb (200 + 24800 nt). Filtered elements will not overlap within this space.
+ 1. Start
+ 2. Stop
+ 3. Score
 
-### Library 
+In the case of `bedgraph` input, the output will contain three columns for the chromosome, and start and stop positions (also half-open coordinate-indexed). The fourth column will contain the aggregated score over the interval. The difference of the start and stop positions will equal the `window_bins` parameter, times the size of an individual bin (units of nt). Here are column names for this type of output:
 
-Here is one example of how to use the installed package as a library in a standalone script:
+ 1. Chromosome
+ 2. Start
+ 3. Stop
+ 4. Score
+
+Additional columns can be enabled via the `preserve_cols` parameter; see below for more detail.
+
+### Filter method
+
+There are three filter methods available: `pq` ([priority-queue](https://en.wikipedia.org/wiki/Priority_queue)), `wis` ([weighted-interval scheduling](https://en.wikipedia.org/wiki/Interval_scheduling#Weighted)), and `maxmean` (max-mean sweep).
+
+The max-mean sweep method (MM) is a modification of the priority-queue method, using both the maximum and mean scores over each *window* to prioritize window selection. 
+
+The primary difference between MM and PQ methods is that MM will use this aggregated "score" over the window to prioritize its selection, while PQ will only use the score at the centermost position within the window.
+
+### Aggregation method
+
+Once an interval is selected to be filtered, its score value can be its original score (whatever the score is at the index in the vector, or bin in the bedgraph file), or an *aggregated* value calculated from applying a function on scores over the filtered window. The following functions are available via the `aggregation_method` parameter:
+
+ * `min`
+ * `max`
+ * `mean`
+ * `sum`
+ * `median`
+ * `variance`
+ * `percentile`
+
+The default is `max`, *i.e.*, given a filtered window, the score returned is the maximum value of the window. The other functions work accordingly, per their name. 
+
+In the case of `percentile`, the `percentile` parameter may be specified as a value between 0 and 1. Its default is 0.95. However, another value may be specified; using 0.5, for example, would be equivalent to the `median` function.
+
+### Additional columns
+
+For either input type, if the `preserve_cols` flag is set to `True`, additional columns are reported in output:
+
+ 1. `OriginalIdx`
+ 2. `RollingMin`  
+ 3. `RollingMax` 
+ 4. `RollingMean`  
+ 5. `RollingSum`  
+ 6. `RollingMedian`  
+ 7. `RollingVariance`  
+ 8. `RollingPercentile`  
+ 9. `MethodIdx`
+
+#### Example
+
+Here is a minimal example of how to use the installed package as a library in a standalone script:
 
 ```
 #!/usr/bin/env python
@@ -58,36 +91,47 @@ Here is one example of how to use the installed package as a library in a standa
 import filter_regions as fr
 
 m = 'maxmean'
-i = '/path/to/scores.bed'
+i = 'tests/test_example/scores.txt'
+t = 'vector'
 w = 125
 
-f = fr.Filter(method=m, input=i, window_bins=w)
+f = fr.Filter(method=m, input=i, input_type=t, window_bins=w)
 f.read()
 f.filter()
 o = f.output_df
 print(o.head())
 ```
 
-The `Filter` class property `output_df` returns a Pandas dataframe, on which all the usual methods may be called (e.g., `head()` etc.).
-
-One can instead use the `write()` class method to send results to standard output or to a standard file:
+The `Filter` class property `output_df` returns a Pandas dataframe, on which all the usual methods may be called (e.g., `head()` etc.). One can instead use the `write()` class method to send results to standard output or to a standard file, for example:
 
 ```
-f.write() # send to standard output stream
+f.write() # send columns to standard output stream
 ```
 
 Or:
 
 ```
-f.write(output='/path/to/output') # write to a file
+f.write(output='/path/to/output') # write columns to a tab-delimited file
 ```
 
-#### Preserve columns
+#### Example (advanced)
 
-For the `pq` and `maxmean` methods, you may like to preserve additional columns in the output. Run the following after `read()` and before `filter()` to do so:
+Other options can be used, e.g., to pass in a BedGraph file and use the `mean` aggregation function:
 
 ```
-f.preserve_cols = True
-```
+#!/usr/bin/env python
 
-Then `f.filter()` etc.
+import filter_regions as fr
+
+m = 'maxmean'
+i = 'tests/test_example/scores.bed'
+t = 'bedgraph'
+w = 125
+a = 'mean'
+p = True
+
+f = fr.Filter(method=m, input=i, input_type=t, window_bins=w, aggregation_method=a, preserve_cols=p)
+f.read()
+f.filter()
+# ...
+```
