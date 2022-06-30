@@ -111,7 +111,10 @@ i = 'tests/test_example/scores.txt'
 t = 'vector'
 w = 125
 
-f = fr.Filter(method=m, input=i, input_type=t, window_bins=w)
+f = fr.Filter(method=m,
+              input=i,
+              input_type=t,
+              window_bins=w)
 f.read()
 f.filter()
 o = f.output_df
@@ -146,7 +149,12 @@ w = 125
 a = 'mean'
 p = True
 
-f = fr.Filter(method=m, input=i, input_type=t, window_bins=w, aggregation_method=a, preserve_cols=p)
+f = fr.Filter(method=m, 
+              input=i,
+              input_type=t,
+              window_bins=w,
+              aggregation_method=a,
+              preserve_cols=p)
 f.read()
 f.filter()
 o = f.output_df
@@ -219,7 +227,13 @@ a = 'max'
 p = True
 q = False
 
-f = fr.Filter(method=m, input=i, input_type=t, aggregation_method=a, window_bins=w, preserve_cols=p, quiet=q)
+f = fr.Filter(method=m,
+              input=i,
+              input_type=t,
+              aggregation_method=a,
+              window_bins=w,
+              preserve_cols=p,
+              quiet=q)
 f.read()
 f.filter()
 f.write(output=None)
