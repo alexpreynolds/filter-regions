@@ -20,7 +20,7 @@ This module may be used as a library integrated with other Python projects, or a
 
 ### Input
 
-There are two options for input. Input can be a file or Numpy vector containing tab-delimited floating-point values on one line (input type of `vector`). Alternatively, input may be a BedGraph-formatted (BED3+1) file or Numpy matrix, where the fourth column contains floats (`bedgraph`).
+There are two options for input. Input can be a file or Numpy vector (1d array) containing tab-delimited floating-point values on one line (input type of `vector`). Alternatively, input may be a BedGraph-formatted (BED3+1) file or Numpy matrix (2d array), where the fourth column contains floats (`bedgraph`).
 
 ### Output
 
@@ -141,4 +141,76 @@ f.read()
 f.filter()
 o = f.output_df
 # ...
+```
+
+#### Example (Numpy, 1d)
+
+Here is an example where a 1d array or vector of floats may be passed in:
+
+```
+#!/usr/bin/env python
+
+import sys
+import numpy as np
+import filter_regions as fr
+
+m = 'maxmean'
+i = np.array([1.0, 2.0, 5.0, 10.0, 5.0, 5.0, 4.0, 8.0, 2.0, 1.0, 10.0, 1.0, 1.0, 1.0, 5.0])
+t = 'vector'
+w = 3
+a = 'max'
+p = True
+q = False
+
+f = fr.Filter(method=m,
+              input=i,
+              input_type=t,
+              aggregation_method=a,
+              window_bins=w,
+              preserve_cols=p,
+              quiet=q)
+f.read()
+f.filter()
+f.write(output=None)
+```
+
+#### Example (Numpy, 2d)
+
+Finally, here is an example of passing in a BedGraph-like 2d array or matrix:
+
+```
+#!/usr/bin/env python
+
+import sys
+import numpy as np
+import filter_regions as fr
+
+m = 'maxmean'
+i = np.array([
+    ['chr1', 0, 100, 1.0],
+    ['chr1', 100, 200, 2.0],
+    ['chr1', 200, 300, 5.0],
+    ['chr1', 300, 400, 10.0],
+    ['chr1', 400, 500, 5.0],
+    ['chr1', 500, 600, 5.0],
+    ['chr1', 600, 700, 4.0],
+    ['chr1', 700, 800, 8.0],
+    ['chr1', 800, 900, 2.0],
+    ['chr1', 900, 1000, 1.0],
+    ['chr1', 1000, 1100, 10.0],
+    ['chr1', 1100, 1200, 1.0],
+    ['chr1', 1200, 1300, 1.0],
+    ['chr1', 1300, 1400, 1.0],
+    ['chr1', 1400, 1500, 5.0]
+])
+t = 'bedgraph'
+w = 3
+a = 'max'
+p = True
+q = False
+
+f = fr.Filter(method=m, input=i, input_type=t, aggregation_method=a, window_bins=w, preserve_cols=p, quiet=q)
+f.read()
+f.filter()
+f.write(output=None)
 ```
