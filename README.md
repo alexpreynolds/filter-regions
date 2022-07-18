@@ -26,6 +26,8 @@ There are two options for input. Input can be a file or Numpy vector (1d array) 
 
 Depending on the chosen input type (`vector` or `bedgraph`), by default, the output will be either a three- or four-column Pandas dataframe, respectively.
 
+You can specify a ceiling on the number of elements reported via the `max_elements` parameter. If the number of elements found is greater than this property, the highest-scoring `max_elements` number of elements are reported. If there are fewer elements found, that smaller number is reported.
+
 #### Vector
 
 In the case of the `vector` input type, the output will contain half-open start and end indices (`[start, end)`) and the aggregated score over the half-open interval.

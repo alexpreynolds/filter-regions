@@ -30,7 +30,7 @@ w = 3
 a = 'max'
 p = True
 q = False
-e = 3
+e = 123
 
 f = fr.Filter(method=m, 
               input=i, 
