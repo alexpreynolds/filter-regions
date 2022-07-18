@@ -30,8 +30,16 @@ w = 3
 a = 'max'
 p = True
 q = False
+e = 3
 
-f = fr.Filter(method=m, input=i, input_type=t, aggregation_method=a, window_bins=w, preserve_cols=p, quiet=q)
+f = fr.Filter(method=m, 
+              input=i, 
+              input_type=t, 
+              aggregation_method=a, 
+              window_bins=w, 
+              preserve_cols=p, 
+              max_elements=e,
+              quiet=q)
 f.read()
 f.filter()
 f.write(output=None)

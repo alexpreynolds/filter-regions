@@ -19,7 +19,7 @@ import typer
 from rich.console import Console
 
 APP_NAME = "filter-regions"
-MAX_ELEMENTS = 100_000
+MAX_ELEMS = 100_000
 
 class FilterMeta(EnumMeta):
     def __contains__(cls, item):
@@ -63,6 +63,7 @@ class Filter:
         preserve_cols=False,
         aggregation_method=FilterAggregationMethod.max,
         percentile=0.95,
+        max_elements=MAX_ELEMS,
         quiet=False,
     ) -> None:
         self.method: str = method
@@ -76,6 +77,7 @@ class Filter:
         self.preserve_cols: bool = preserve_cols
         self.aggregation_method: str = aggregation_method
         self.percentile: float = percentile
+        self.max_elements: int = max_elements
         self.quiet: bool = quiet
         # ignore SettingWithCopyWarning 
         # cf. https://towardsdatascience.com/explaining-the-settingwithcopywarning-in-pandas-ebc19d799d25
@@ -92,6 +94,9 @@ class Filter:
 
     def input_type(self, it: str) -> None:
         self.input_type = it
+
+    def max_elements(self, me: int) -> None:
+        self.max_elements = me
 
     def read(self) -> None:
         df = None
@@ -163,8 +168,7 @@ class Filter:
                 df = df[["Chromosome", "Start", "End", "Score"]]
             else:
                 df = df[["Start", "End", "Score"]]
-        if self.method != "wis":
-            df["Score"] = df["Score"].astype(float) # req'd for sort to work correctly
+        df["Score"] = df["Score"].astype(float) # req'd for sort to work correctly
         if self.method == "wis" and self.input_type == "vector":
             df = pr.PyRanges(df)
         self.input_df = df
@@ -238,8 +242,16 @@ class Filter:
 
     def wis(self) -> pd.DataFrame:
         d = self.input_df
-        m = d.merge()
-        df = d.as_df()
+        m = (
+            pr.PyRanges(d).merge() 
+            if isinstance(d, pd.DataFrame)
+            else d.merge()
+        )
+        df = (
+            d
+            if isinstance(d, pd.DataFrame)
+            else d.as_df()
+        ) 
         self.input_df = df
         df = df.rename(columns={"Name": "Score"})
         # update the start and end loci based on window size (bin units)
@@ -303,10 +315,10 @@ class Filter:
         for j in range(1, n):
             score = df.loc[df.index[j], "Score"]
             opt[j] = max(score + opt[p[j]], opt[j - 1])
+            
         # backwards trace to retrieve path
         q = []
         j = n - 1
-        # print("{}".format(j))
         while j >= 0:
             score = df.loc[df.index[j], "Score"]
             if score + opt[p[j]] > opt[j - 1]:
@@ -319,6 +331,11 @@ class Filter:
         df = df.iloc[q]
         if self.input_type == "vector":
             df = df[["Start", "End", "Score"]] if not self.preserve_cols else df.iloc[: , 1:]
+        if len(df.index) > self.max_elements:
+            df = df \
+                .sort_values(by=["Score"], ascending=False) \
+                .head(self.max_elements) \
+                .sort_index(axis=0)
         return df
 
     def maxmean(self, pq: bool = False) -> pd.DataFrame:
@@ -365,7 +382,7 @@ class Filter:
         n = len(df)
         hits = np.zeros(n, dtype=bool)
         indices = []
-        k = MAX_ELEMENTS
+        k = self.max_elements
         for loc in range(n):
             if k <= 0:
                 break
@@ -457,6 +474,12 @@ def main(
         "--percentile",
         help="If percentile aggregation is used, this float specifies the desired percentile (0 < p < 1; default=0.95)"
     ),
+    max_elements: int = typer.Option(
+        MAX_ELEMS,
+        "-e",
+        "--max-elements",
+        help="Maximum number of elements allowed"
+    ),
     quiet: bool = typer.Option(
         False, "-q", "--quiet", help="Do not print messages to console"
     )
@@ -490,6 +513,7 @@ def main(
                preserve_cols, 
                aggregation_method, 
                percentile,
+               max_elements,
                quiet)
     f.read()
     f.filter()
