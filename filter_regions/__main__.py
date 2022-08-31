@@ -1,7 +1,5 @@
 # type: ignore[attr-defined]
 
-from typing import Union
-
 import bisect
 import collections
 import errno
@@ -438,7 +436,7 @@ def main(
         case_sensitive=True,
         help="Filter method (pq|wis|maxmean)",
     ),
-    input: Union[str, np.ndarray] = typer.Option(
+    input = typer.Option(
         ..., "-i", "--input", case_sensitive=True, help="Input filename path, or Numpy vector or matrix"
     ),
     input_type: str = typer.Option(
