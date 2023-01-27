@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "filter-regions"
-version = "0.1.1"
+version = "0.2.0"
 description = "Filter genomic regions by score and proximity"
 readme = "README.md"
 authors = ["Altius Institute for Biosciences <alexpreynolds@gmail.com>"]

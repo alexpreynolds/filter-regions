@@ -209,17 +209,47 @@ class Filter:
             if self.aggregation_method == "max":
                 df.Score = df.RollingMax
             elif self.aggregation_method == "min":
-                df.Score = df.RollingMin
+                if self.preserve_cols:
+                    df.Score = df.RollingMin
+                else:
+                    console.print(
+                        f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Cannot access aggregation score without --preserve-cols"
+                    )
+                    sys.exit(errno.EINVAL)
             elif self.aggregation_method == "mean":
                 df.Score = df.RollingMean
             elif self.aggregation_method == "sum":
-                df.Score = df.RollingSum
+                if self.preserve_cols:
+                    df.Score = df.RollingSum
+                else:
+                    console.print(
+                        f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Cannot access aggregation score without --preserve-cols"
+                    )
+                    sys.exit(errno.EINVAL)
             elif self.aggregation_method == "median":
-                df.Score = df.RollingMedian
+                if self.preserve_cols:
+                    df.Score = df.RollingMedian
+                else:
+                    console.print(
+                        f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Cannot access aggregation score without --preserve-cols"
+                    )
+                    sys.exit(errno.EINVAL)
             elif self.aggregation_method == "variance":
-                df.Score = df.RollingVariance
+                if self.preserve_cols:
+                    df.Score = df.RollingVariance
+                else:
+                    console.print(
+                        f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Cannot access aggregation score without --preserve-cols"
+                    )
+                    sys.exit(errno.EINVAL)
             elif self.aggregation_method == "percentile":
-                df.Score = df.RollingPercentile
+                if self.preserve_cols:
+                    df.Score = df.RollingPercentile
+                else:
+                    console.print(
+                        f"[bold blue]{APP_NAME}[/] | [bold red]Error[/] | Cannot access aggregation score without --preserve-cols"
+                    )
+                    sys.exit(errno.EINVAL)
             self.output_df = df
             end = timeit.default_timer()
             if not self.quiet:
@@ -352,13 +382,14 @@ class Filter:
         df["End"] = df["End"].astype(int)
         df = df.reset_index(drop=True)
         # get rolling summary statistics
-        df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
         df["RollingMax"] = df["Score"].rolling(self.window_bins, center=True).max()
         df["RollingMean"] = df["Score"].rolling(self.window_bins, center=True).mean()
-        df["RollingSum"] = df["Score"].rolling(self.window_bins, center=True).sum()
-        df["RollingMedian"] = df["Score"].rolling(self.window_bins, center=True).median()
-        df["RollingVariance"] = df["Score"].rolling(self.window_bins, center=True).var()        
-        df["RollingPercentile"] = df["Score"].rolling(self.window_bins, center=True).quantile(self.percentile)
+        if self.preserve_cols:
+            df["RollingMin"] = df["Score"].rolling(self.window_bins, center=True).min()
+            df["RollingSum"] = df["Score"].rolling(self.window_bins, center=True).sum()
+            df["RollingMedian"] = df["Score"].rolling(self.window_bins, center=True).median()
+            df["RollingVariance"] = df["Score"].rolling(self.window_bins, center=True).var()        
+            df["RollingPercentile"] = df["Score"].rolling(self.window_bins, center=True).quantile(self.percentile)
         # get rid of edges
         df = df.dropna().reset_index(drop=True)
         # drop regions which fall over two chromosomes
@@ -381,30 +412,22 @@ class Filter:
         hits = np.zeros(n, dtype=bool)
         indices = []
         k = self.max_elements
+        # precalculate values for regions from individual indices
+        df["MethodStartIdx"] = df["MethodIdx"] - self.window_bins // 2
+        df["MethodEndIdx"] = df["MethodIdx"] + self.window_bins // 2 + 1 if self.window_bins % 2 else df["MethodIdx"] + self.window_bins // 2
+        df.loc[df["MethodStartIdx"] < 0, "MethodStartIdx"] = 0
+        df.loc[df["MethodEndIdx"] > n, "MethodEndIdx"] = n
+        loc_MethodIdx = df.columns.get_loc("MethodIdx")
+        loc_MethodStartIdx = df.columns.get_loc("MethodStartIdx")
+        loc_MethodEndIdx = df.columns.get_loc("MethodEndIdx")
         for loc in range(n):
             if k <= 0:
                 break
-            j = int(df.iloc[loc]["MethodIdx"])
-            start = (
-                (j - self.window_bins // 2) if (j - self.window_bins // 2) > 0 else 0
-            )
-            if (
-                self.window_bins % 2
-            ):  # if there are an odd number of bins, have to add one to stop
-                stop = (
-                    (j + self.window_bins // 2 + 1)
-                    if (j + self.window_bins // 2 + 1) <= n
-                    else n
-                )
-            else:
-                stop = (
-                    (j + self.window_bins // 2)
-                    if (j + self.window_bins // 2) <= n
-                    else n
-                )
+            start = df.iloc[loc, loc_MethodStartIdx]
+            stop = df.iloc[loc, loc_MethodEndIdx]
             if not np.any(hits[start:stop]):
                 hits[start:stop] = True
-                indices.append(j)
+                indices.append(df.iloc[loc, loc_MethodIdx])
                 k -= 1
         df = df.loc[indices]
         # resort input by original order
